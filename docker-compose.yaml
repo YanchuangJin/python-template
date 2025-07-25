@@ -1,0 +1,92 @@
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: app-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: app-postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=pg_user
+      - POSTGRES_PASSWORD=pg_passwd
+      - POSTGRES_DB=app_db
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U pg_user -d app_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.12-alpine
+    container_name: app-clickhouse
+    restart: always
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    environment:
+      - CLICKHOUSE_USER=ch_user
+      - CLICKHOUSE_PASSWORD=ch_passwd
+      - CLICKHOUSE_DB=analytics_db
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  python-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-python
+    restart: always
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    environment:
+      - REDIS_URL=redis://:redis_passwd@redis:6379/0
+      - POSTGRES_URL=postgresql://pg_user:pg_passwd@postgres:5432/app_db
+      - CLICKHOUSE_URL=http://ch_user:ch_passwd@clickhouse:8123/analytics_db
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+    name: app-internal-network
+
+volumes:
+  redis-data:
+  postgres-data:
+  clickhouse-data:
